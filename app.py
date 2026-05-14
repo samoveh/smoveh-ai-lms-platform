@@ -1,5 +1,5 @@
 import streamlit as st
-from mistralai import Client
+from mistralai import Mistral
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from docx import Document
@@ -34,7 +34,7 @@ load_dotenv()
 
 api_key = os.getenv("MISTRAL_API_KEY")
 
-client = Client(api_key=api_key)
+client = Mistral(api_key=api_key)
 
 # =========================================================
 # PAGE CONFIG
