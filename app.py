@@ -1,5 +1,5 @@
 import streamlit as st
-from mistralai import Mistral
+import requests
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from docx import Document
@@ -34,7 +34,38 @@ load_dotenv()
 
 api_key = os.getenv("MISTRAL_API_KEY")
 
-client = Mistral(api_key=api_key)
+# =========================================================
+# MISTRAL API FUNCTION
+# =========================================================
+
+def ask_mistral(prompt):
+
+    url = "https://api.mistral.ai/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json"
+    }
+
+    payload = {
+        "model": "mistral-small-latest",
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ]
+    }
+
+    response = requests.post(
+        url,
+        headers=headers,
+        json=payload
+    )
+
+    response_json = response.json()
+
+    return response_json["choices"][0]["message"]["content"]
 
 # =========================================================
 # PAGE CONFIG
@@ -224,10 +255,6 @@ if (
                 "Course created successfully!"
             )
 
-    # =====================================================
-    # COURSE SELECTION
-    # =====================================================
-
     teacher_courses = session.query(
         Course
     ).filter_by(
@@ -245,53 +272,6 @@ if (
             "Select Course",
             course_options
         )
-
-        # =================================================
-        # COURSE ANALYTICS
-        # =================================================
-
-        st.subheader("Course Analytics")
-
-        all_submissions = session.query(
-            Submission
-        ).filter_by(
-            course_title=selected_course
-        ).all()
-
-        if all_submissions:
-
-            scores = []
-
-            for submission in all_submissions:
-
-                try:
-                    scores.append(
-                        int(submission.score)
-                    )
-                except:
-                    pass
-
-            if scores:
-
-                col1, col2, col3 = st.columns(3)
-
-                col1.metric(
-                    "Total Submissions",
-                    len(scores)
-                )
-
-                col2.metric(
-                    "Average Score",
-                    round(
-                        sum(scores) / len(scores),
-                        2
-                    )
-                )
-
-                col3.metric(
-                    "Highest Score",
-                    max(scores)
-                )
 
         # =================================================
         # CREATE ASSESSMENT
@@ -415,17 +395,7 @@ if (
 
                 try:
 
-                    response = client.chat.complete(
-                        model="mistral-small-latest",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
-                        ]
-                    )
-
-                    result = response.choices[0].message.content
+                    result = ask_mistral(prompt)
 
                     result = result.replace(
                         "```json",
@@ -598,17 +568,9 @@ if (
 
                     try:
 
-                        response = client.chat.complete(
-                            model="mistral-small-latest",
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": grading_prompt
-                                }
-                            ]
+                        result = ask_mistral(
+                            grading_prompt
                         )
-
-                        result = response.choices[0].message.content
 
                         result = result.replace(
                             "```json",
@@ -690,19 +652,9 @@ if (
 
                 try:
 
-                    response = client.chat.complete(
-                        model="mistral-small-latest",
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": tutor_prompt
-                            }
-                        ]
+                    tutor_response = ask_mistral(
+                        tutor_prompt
                     )
-
-                    tutor_response = response.choices[
-                        0
-                    ].message.content
 
                     st.write(tutor_response)
 

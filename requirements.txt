@@ -5,5 +5,5 @@ pypdf
 python-docx
 pandas
 plotly
-mistralai
 supabase
+requests
