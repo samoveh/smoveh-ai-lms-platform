@@ -622,8 +622,7 @@ if (
                         assessment_title=selected_assessment_name,
                         answers=json.dumps(answers),
                         score=str(total_score),
-                        feedback="
-".join(feedbacks)
+                        feedback="\\n".join(feedbacks)
                     )
 
                     session.add(submission)
