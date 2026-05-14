@@ -1,5 +1,5 @@
 import streamlit as st
-from mistralai import Mistral
+from mistralai import Client
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from docx import Document
@@ -34,7 +34,7 @@ load_dotenv()
 
 api_key = os.getenv("MISTRAL_API_KEY")
 
-client = Mistral(api_key=api_key)
+client = Client(api_key=api_key)
 
 # =========================================================
 # PAGE CONFIG
@@ -485,110 +485,113 @@ if (
 
                     st.error(str(e))
 
-        # =================================================
-        # RUBRIC ASSESSMENT SYSTEM
-        # =================================================
+# =========================================================
+# STUDENT DASHBOARD
+# =========================================================
 
-        st.markdown("---")
+if (
+    st.session_state.logged_in
+    and st.session_state.role == "Student"
+):
 
-        st.subheader("Rubric-Based Assessment")
+    st.header("Student Dashboard")
 
-        rubric_text = st.text_area(
-            "Enter Personalized Rubric",
-            height=200
+    available_courses = session.query(
+        Course
+    ).all()
+
+    if available_courses:
+
+        course_names = [
+            course.title
+            for course in available_courses
+        ]
+
+        selected_course = st.selectbox(
+            "Select Course",
+            course_names
         )
 
-        student_work = st.file_uploader(
-            "Upload Student Work",
-            type=["pdf", "docx", "zip"],
-            key="rubric_upload"
-        )
+        assessments = session.query(
+            Assessment
+        ).filter_by(
+            course_title=selected_course
+        ).all()
 
-        def extract_text_from_file(file_path):
+        if assessments:
 
-            extracted_text = ""
+            assessment_titles = [
+                assessment.title
+                for assessment in assessments
+            ]
 
-            if file_path.endswith(".pdf"):
-
-                reader = PdfReader(file_path)
-
-                for page in reader.pages:
-
-                    text = page.extract_text()
-
-                    if text:
-                        extracted_text += text
-
-            elif file_path.endswith(".docx"):
-
-                doc = DocxReader(file_path)
-
-                for para in doc.paragraphs:
-                    extracted_text += para.text + "\n"
-
-            return extracted_text
-
-        if student_work is not None:
-
-            temp_dir = tempfile.mkdtemp()
-
-            uploaded_path = os.path.join(
-                temp_dir,
-                student_work.name
+            selected_assessment_title = st.selectbox(
+                "Select Assessment",
+                assessment_titles
             )
 
-            with open(uploaded_path, "wb") as f:
-                f.write(student_work.read())
+            selected_assessment = session.query(
+                Assessment
+            ).filter_by(
+                title=selected_assessment_title
+            ).first()
 
-            student_files = []
+            questions = json.loads(
+                selected_assessment.content
+            )
 
-            if uploaded_path.endswith(".zip"):
+            st.subheader("Assessment Questions")
 
-                with zipfile.ZipFile(
-                    uploaded_path,
-                    'r'
-                ) as zip_ref:
+            student_answers = {}
 
-                    zip_ref.extractall(temp_dir)
+            for index, question in enumerate(questions):
 
-                for root, dirs, files in os.walk(temp_dir):
+                st.markdown(
+                    f"### Question {index + 1}"
+                )
 
-                    for file in files:
+                st.write(question["question"])
 
-                        if (
-                            file.endswith(".pdf")
-                            or
-                            file.endswith(".docx")
-                        ):
+                if question["type"] == "MCQ":
 
-                            student_files.append(
-                                os.path.join(root, file)
-                            )
-
-            else:
-                student_files.append(uploaded_path)
-
-            if st.button("Start Rubric Assessment"):
-
-                for file_path in student_files:
-
-                    extracted_text = extract_text_from_file(
-                        file_path
+                    answer = st.radio(
+                        "Select Answer",
+                        question["options"],
+                        key=f"mcq_{index}"
                     )
 
+                else:
+
+                    answer = st.text_area(
+                        "Your Answer",
+                        key=f"text_{index}"
+                    )
+
+                student_answers[index] = answer
+
+            if st.button("Submit Assessment"):
+
+                total_score = 0
+
+                feedback_list = []
+
+                for index, question in enumerate(questions):
+
+                    student_answer = student_answers[index]
+
                     grading_prompt = f"""
-                    Assess this work using the rubric.
+                    Grade the student answer.
 
-                    RUBRIC:
-                    {rubric_text}
+                    QUESTION:
+                    {question['question']}
 
-                    STUDENT WORK:
-                    {extracted_text[:12000]}
+                    STUDENT ANSWER:
+                    {student_answer}
 
                     Return ONLY valid JSON.
 
                     {{
-                      "total_score": 0,
+                      "score": 0,
                       "feedback": ""
                     }}
                     """
@@ -621,51 +624,90 @@ if (
 
                         grading_data = json.loads(result)
 
-                        st.write(
-                            f"Score: {grading_data['total_score']}"
+                        total_score += int(
+                            grading_data["score"]
                         )
 
-                        st.write(
-                            f"Feedback: {grading_data['feedback']}"
+                        feedback_list.append(
+                            grading_data["feedback"]
                         )
 
-                        new_result = RubricAssessment(
-                            teacher_email=st.session_state.user_email,
-                            course_title=selected_course,
-                            student_name=os.path.basename(file_path),
-                            file_name=os.path.basename(file_path),
-                            rubric=rubric_text,
-                            total_score=str(
-                                grading_data['total_score']
-                            ),
-                            feedback=grading_data['feedback']
+                    except:
+
+                        feedback_list.append(
+                            "Could not grade answer."
                         )
 
-                        session.add(new_result)
+                submission = Submission(
+                    student_email=st.session_state.user_email,
+                    course_title=selected_course,
+                    assessment_title=selected_assessment_title,
+                    answers=json.dumps(student_answers),
+                    score=str(total_score),
+                    feedback="\n".join(feedback_list)
+                )
 
-                        session.commit()
+                session.add(submission)
 
-                        st.success(
-                            "Rubric assessment saved!"
-                        )
+                session.commit()
 
-                    except Exception as e:
-                        st.error(str(e))
+                st.success(
+                    f"Assessment Submitted! Score: {total_score}"
+                )
 
-# =========================================================
-# STUDENT DASHBOARD
-# =========================================================
+                st.subheader("AI Feedback")
 
-if (
-    st.session_state.logged_in
-    and st.session_state.role == "Student"
-):
+                for feedback in feedback_list:
+                    st.write(feedback)
 
-    st.header("Student Dashboard")
+            # =================================================
+            # AI TUTOR
+            # =================================================
 
-    st.info(
-        "Assessments created by teachers will appear here."
-    )
+            st.markdown("---")
+
+            st.subheader("AI Tutor")
+
+            tutor_question = st.text_input(
+                "Ask the AI Tutor"
+            )
+
+            if st.button("Ask Tutor"):
+
+                knowledge = search_knowledge(
+                    tutor_question
+                )
+
+                tutor_prompt = f"""
+                Use the course material below to answer.
+
+                COURSE MATERIAL:
+                {knowledge}
+
+                QUESTION:
+                {tutor_question}
+                """
+
+                try:
+
+                    response = client.chat.complete(
+                        model="mistral-small-latest",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": tutor_prompt
+                            }
+                        ]
+                    )
+
+                    tutor_response = response.choices[
+                        0
+                    ].message.content
+
+                    st.write(tutor_response)
+
+                except Exception as e:
+                    st.error(str(e))
 
 if not st.session_state.logged_in:
 
