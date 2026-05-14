@@ -1,6 +1,5 @@
 import streamlit as st
-from mistralai.client import MistralClient
-from mistralai.models.chat_completion import ChatMessage
+from mistralai import Mistral
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from docx import Document
@@ -35,7 +34,7 @@ load_dotenv()
 
 api_key = os.getenv("MISTRAL_API_KEY")
 
-client = MistralClient(api_key=api_key)
+client = Mistral(api_key=api_key)
 
 # =========================================================
 # PAGE CONFIG
@@ -188,6 +187,10 @@ if (
 
     st.header("Teacher Dashboard")
 
+    # =====================================================
+    # CREATE COURSE
+    # =====================================================
+
     st.subheader("Create Course")
 
     course_title = st.text_input(
@@ -221,6 +224,10 @@ if (
                 "Course created successfully!"
             )
 
+    # =====================================================
+    # COURSE SELECTION
+    # =====================================================
+
     teacher_courses = session.query(
         Course
     ).filter_by(
@@ -239,9 +246,56 @@ if (
             course_options
         )
 
-        # =====================================================
+        # =================================================
+        # COURSE ANALYTICS
+        # =================================================
+
+        st.subheader("Course Analytics")
+
+        all_submissions = session.query(
+            Submission
+        ).filter_by(
+            course_title=selected_course
+        ).all()
+
+        if all_submissions:
+
+            scores = []
+
+            for submission in all_submissions:
+
+                try:
+                    scores.append(
+                        int(submission.score)
+                    )
+                except:
+                    pass
+
+            if scores:
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric(
+                    "Total Submissions",
+                    len(scores)
+                )
+
+                col2.metric(
+                    "Average Score",
+                    round(
+                        sum(scores) / len(scores),
+                        2
+                    )
+                )
+
+                col3.metric(
+                    "Highest Score",
+                    max(scores)
+                )
+
+        # =================================================
         # CREATE ASSESSMENT
-        # =====================================================
+        # =================================================
 
         st.subheader("Create Assessment")
 
@@ -361,13 +415,13 @@ if (
 
                 try:
 
-                    response = client.chat(
+                    response = client.chat.complete(
                         model="mistral-small-latest",
                         messages=[
-                            ChatMessage(
-                                role="user",
-                                content=prompt
-                            )
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
                         ]
                     )
 
@@ -431,9 +485,9 @@ if (
 
                     st.error(str(e))
 
-        # =====================================================
-        # RUBRIC SYSTEM
-        # =====================================================
+        # =================================================
+        # RUBRIC ASSESSMENT SYSTEM
+        # =================================================
 
         st.markdown("---")
 
@@ -541,13 +595,13 @@ if (
 
                     try:
 
-                        response = client.chat(
+                        response = client.chat.complete(
                             model="mistral-small-latest",
                             messages=[
-                                ChatMessage(
-                                    role="user",
-                                    content=grading_prompt
-                                )
+                                {
+                                    "role": "user",
+                                    "content": grading_prompt
+                                }
                             ]
                         )
 
