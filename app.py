@@ -1,23 +1,22 @@
 import streamlit as st
 import requests
-from pypdf import PdfReader
-from dotenv import load_dotenv
-from docx import Document
-import zipfile
+import json
+import os
 import tempfile
+import zipfile
 import pandas as pd
 import plotly.express as px
-import os
-import json
 
+from dotenv import load_dotenv
+from pypdf import PdfReader
 from docx import Document as DocxReader
 
+from database import session
 from database import User
 from database import Course
 from database import Assessment
 from database import Submission
 from database import RubricAssessment
-from database import session
 
 from auth import sign_up
 from auth import sign_in
@@ -27,7 +26,7 @@ from rag import process_pdf
 from rag import search_knowledge
 
 # =========================================================
-# LOAD ENVIRONMENT
+# ENVIRONMENT
 # =========================================================
 
 load_dotenv()
@@ -35,7 +34,7 @@ load_dotenv()
 api_key = os.getenv("MISTRAL_API_KEY")
 
 # =========================================================
-# MISTRAL API FUNCTION
+# MISTRAL HELPER
 # =========================================================
 
 def ask_mistral(prompt):
@@ -63,9 +62,9 @@ def ask_mistral(prompt):
         json=payload
     )
 
-    response_json = response.json()
+    data = response.json()
 
-    return response_json["choices"][0]["message"]["content"]
+    return data["choices"][0]["message"]["content"]
 
 # =========================================================
 # PAGE CONFIG
@@ -97,7 +96,7 @@ if "role" not in st.session_state:
 
 st.sidebar.title("Authentication")
 
-auth_mode = st.sidebar.selectbox(
+mode = st.sidebar.selectbox(
     "Choose Option",
     ["Login", "Signup"]
 )
@@ -110,15 +109,11 @@ password = st.sidebar.text_input(
 )
 
 role = st.sidebar.selectbox(
-    "Select Role",
+    "Role",
     ["Teacher", "Student"]
 )
 
-# =========================================================
-# SIGNUP
-# =========================================================
-
-if auth_mode == "Signup":
+if mode == "Signup":
 
     if st.sidebar.button("Create Account"):
 
@@ -138,36 +133,24 @@ if auth_mode == "Signup":
                 )
 
                 session.add(new_user)
-
                 session.commit()
 
-            st.success(
-                "Account created successfully!"
-            )
+            st.success("Account created successfully")
 
         except Exception as e:
-
             st.error(str(e))
 
-# =========================================================
-# LOGIN
-# =========================================================
-
-if auth_mode == "Login":
+if mode == "Login":
 
     if st.sidebar.button("Login"):
 
         try:
 
-            response = sign_in(
-                email,
-                password
-            )
+            response = sign_in(email, password)
 
             if hasattr(response, "user"):
 
                 st.session_state.logged_in = True
-
                 st.session_state.user_email = email
 
                 user = session.query(User).filter_by(
@@ -180,17 +163,12 @@ if auth_mode == "Login":
                 st.rerun()
 
         except Exception as e:
-
             st.error(str(e))
-
-# =========================================================
-# LOGOUT
-# =========================================================
 
 if st.session_state.logged_in:
 
     st.sidebar.success(
-        f"Logged in as: {st.session_state.user_email}"
+        f"Logged in as {st.session_state.user_email}"
     )
 
     st.sidebar.success(
@@ -218,242 +196,285 @@ if (
 
     st.header("Teacher Dashboard")
 
+    tabs = st.tabs([
+        "Courses",
+        "Assessments",
+        "Analytics",
+        "Rubric Grading"
+    ])
+
     # =====================================================
-    # CREATE COURSE
+    # COURSE TAB
     # =====================================================
 
-    st.subheader("Create Course")
+    with tabs[0]:
 
-    course_title = st.text_input(
-        "Course Title"
-    )
+        st.subheader("Create Course")
 
-    if st.button("Create Course"):
+        course_title = st.text_input(
+            "Course Title"
+        )
 
-        existing_course = session.query(Course).filter_by(
-            title=course_title
-        ).first()
+        if st.button("Create Course"):
 
-        if existing_course:
+            existing = session.query(Course).filter_by(
+                title=course_title
+            ).first()
 
-            st.warning(
-                "Course already exists."
+            if existing:
+                st.warning("Course already exists")
+
+            else:
+
+                new_course = Course(
+                    title=course_title,
+                    teacher_email=st.session_state.user_email
+                )
+
+                session.add(new_course)
+                session.commit()
+
+                st.success("Course created")
+
+        teacher_courses = session.query(
+            Course
+        ).filter_by(
+            teacher_email=st.session_state.user_email
+        ).all()
+
+        if teacher_courses:
+
+            st.subheader("Your Courses")
+
+            for course in teacher_courses:
+                st.write(course.title)
+
+    # =====================================================
+    # ASSESSMENT TAB
+    # =====================================================
+
+    with tabs[1]:
+
+        teacher_courses = session.query(
+            Course
+        ).filter_by(
+            teacher_email=st.session_state.user_email
+        ).all()
+
+        if teacher_courses:
+
+            course_names = [
+                c.title for c in teacher_courses
+            ]
+
+            selected_course = st.selectbox(
+                "Select Course",
+                course_names
             )
 
-        else:
-
-            new_course = Course(
-                title=course_title,
-                teacher_email=st.session_state.user_email
+            assessment_title = st.text_input(
+                "Assessment Title"
             )
 
-            session.add(new_course)
-
-            session.commit()
-
-            st.success(
-                "Course created successfully!"
+            difficulty = st.selectbox(
+                "Difficulty",
+                ["Easy", "Medium", "Hard"]
             )
 
-    teacher_courses = session.query(
-        Course
-    ).filter_by(
-        teacher_email=st.session_state.user_email
-    ).all()
-
-    if teacher_courses:
-
-        course_options = [
-            course.title
-            for course in teacher_courses
-        ]
-
-        selected_course = st.selectbox(
-            "Select Course",
-            course_options
-        )
-
-        # =================================================
-        # CREATE ASSESSMENT
-        # =================================================
-
-        st.subheader("Create Assessment")
-
-        assessment_title = st.text_input(
-            "Assessment Title"
-        )
-
-        num_questions = st.slider(
-            "Number of Questions",
-            1,
-            20,
-            5
-        )
-
-        difficulty = st.selectbox(
-            "Difficulty",
-            ["Easy", "Medium", "Hard"]
-        )
-
-        question_type = st.selectbox(
-            "Question Type",
-            ["Essay", "Short Answer", "MCQ"]
-        )
-
-        marks = st.selectbox(
-            "Marks Per Question",
-            [2, 5, 10]
-        )
-
-        uploaded_files = st.file_uploader(
-            "Upload PDFs",
-            type="pdf",
-            accept_multiple_files=True
-        )
-
-        if uploaded_files:
-
-            combined_text = ""
-
-            for uploaded_file in uploaded_files:
-
-                temp_file = f"temp_{uploaded_file.name}"
-
-                with open(temp_file, "wb") as f:
-                    f.write(uploaded_file.read())
-
-                process_pdf(temp_file)
-
-                reader = PdfReader(temp_file)
-
-                for page in reader.pages:
-
-                    extracted = page.extract_text()
-
-                    if extracted:
-                        combined_text += extracted
-
-            st.success(
-                "PDFs uploaded successfully!"
+            question_type = st.selectbox(
+                "Question Type",
+                ["MCQ", "Essay", "Short Answer"]
             )
 
-            if st.button("Generate Assessment"):
+            num_questions = st.slider(
+                "Number of Questions",
+                1,
+                20,
+                5
+            )
 
-                if question_type == "MCQ":
+            uploaded_files = st.file_uploader(
+                "Upload PDFs",
+                type=["pdf"],
+                accept_multiple_files=True
+            )
 
-                    format_instruction = """
-                    Return ONLY valid JSON.
+            if uploaded_files:
 
-                    [
-                      {
-                        "question": "",
-                        "type": "MCQ",
-                        "options": [
-                          "",
-                          "",
-                          "",
-                          ""
-                        ],
-                        "correct_answer": "",
-                        "marks": 0
-                      }
-                    ]
+                combined_text = ""
+
+                for uploaded_file in uploaded_files:
+
+                    temp_path = f"temp_{uploaded_file.name}"
+
+                    with open(temp_path, "wb") as f:
+                        f.write(uploaded_file.read())
+
+                    process_pdf(temp_path)
+
+                    reader = PdfReader(temp_path)
+
+                    for page in reader.pages:
+
+                        text = page.extract_text()
+
+                        if text:
+                            combined_text += text
+
+                st.success("PDFs uploaded")
+
+                if st.button("Generate Assessment"):
+
+                    if question_type == "MCQ":
+
+                        instruction = """
+                        Return ONLY valid JSON.
+
+                        [
+                          {
+                            "question": "",
+                            "type": "MCQ",
+                            "options": ["", "", "", ""],
+                            "correct_answer": ""
+                          }
+                        ]
+                        """
+
+                    else:
+
+                        instruction = """
+                        Return ONLY valid JSON.
+
+                        [
+                          {
+                            "question": "",
+                            "type": "Essay",
+                            "model_answer": ""
+                          }
+                        ]
+                        """
+
+                    prompt = f"""
+                    Generate assessment questions.
+
+                    {instruction}
+
+                    COURSE:
+                    {selected_course}
+
+                    CONTENT:
+                    {combined_text[:7000]}
                     """
 
-                else:
+                    try:
 
-                    format_instruction = """
-                    Return ONLY valid JSON.
+                        result = ask_mistral(prompt)
 
-                    [
-                      {
-                        "question": "",
-                        "type": "",
-                        "model_answer": "",
-                        "marks": 0
-                      }
-                    ]
-                    """
+                        result = result.replace("```json", "")
+                        result = result.replace("```", "")
+                        result = result.strip()
 
-                prompt = f"""
-                Generate assessment questions.
+                        questions = json.loads(result)
 
-                {format_instruction}
+                        for index, q in enumerate(questions):
 
-                Course:
-                {selected_course}
+                            st.markdown(
+                                f"### Question {index + 1}"
+                            )
 
-                Number of Questions:
-                {num_questions}
+                            st.write(q["question"])
 
-                Difficulty:
-                {difficulty}
+                            if q["type"] == "MCQ":
 
-                Lecture Material:
-                {combined_text[:8000]}
-                """
+                                for option in q["options"]:
+                                    st.write(f"- {option}")
+
+                        assessment = Assessment(
+                            course_title=selected_course,
+                            title=assessment_title,
+                            teacher_email=st.session_state.user_email,
+                            content=json.dumps(questions),
+                            difficulty=difficulty,
+                            question_type=question_type,
+                            marks="5",
+                            duration="30",
+                            published="Yes"
+                        )
+
+                        session.add(assessment)
+                        session.commit()
+
+                        st.success("Assessment published")
+
+                    except Exception as e:
+                        st.error(str(e))
+
+    # =====================================================
+    # ANALYTICS TAB
+    # =====================================================
+
+    with tabs[2]:
+
+        submissions = session.query(Submission).all()
+
+        if submissions:
+
+            scores = []
+            students = []
+
+            for submission in submissions:
 
                 try:
+                    scores.append(int(submission.score))
+                    students.append(submission.student_email)
+                except:
+                    pass
 
-                    result = ask_mistral(prompt)
+            if scores:
 
-                    result = result.replace(
-                        "```json",
-                        ""
-                    )
+                st.metric(
+                    "Average Score",
+                    round(sum(scores) / len(scores), 2)
+                )
 
-                    result = result.replace(
-                        "```",
-                        ""
-                    )
+                df = pd.DataFrame({
+                    "Student": students,
+                    "Score": scores
+                })
 
-                    result = result.strip()
+                fig = px.bar(
+                    df,
+                    x="Student",
+                    y="Score",
+                    title="Student Performance"
+                )
 
-                    questions = json.loads(result)
+                st.plotly_chart(fig)
 
-                    st.subheader(
-                        "Generated Assessment"
-                    )
+    # =====================================================
+    # RUBRIC TAB
+    # =====================================================
 
-                    for index, question_data in enumerate(questions):
+    with tabs[3]:
 
-                        st.markdown(
-                            f"## Question {index + 1}"
-                        )
+        st.subheader("Rubric Assessment")
 
-                        st.write(
-                            question_data["question"]
-                        )
+        rubric = st.text_area(
+            "Rubric"
+        )
 
-                        if question_data["type"] == "MCQ":
+        uploaded_work = st.file_uploader(
+            "Upload Student Work",
+            type=["pdf", "docx", "zip"]
+        )
 
-                            for option in question_data["options"]:
+        if uploaded_work:
 
-                                st.write(f"- {option}")
+            if st.button("Start Assessment"):
 
-                    new_assessment = Assessment(
-                        course_title=selected_course,
-                        title=assessment_title,
-                        teacher_email=st.session_state.user_email,
-                        content=json.dumps(questions),
-                        difficulty=difficulty,
-                        question_type=question_type,
-                        marks=str(marks),
-                        duration="30",
-                        published="Yes"
-                    )
-
-                    session.add(new_assessment)
-
-                    session.commit()
-
-                    st.success(
-                        "Assessment Published!"
-                    )
-
-                except Exception as e:
-
-                    st.error(str(e))
+                st.success(
+                    "Rubric assessment started"
+                )
 
 # =========================================================
 # STUDENT DASHBOARD
@@ -466,203 +487,226 @@ if (
 
     st.header("Student Dashboard")
 
-    available_courses = session.query(
-        Course
-    ).all()
+    student_tabs = st.tabs([
+        "Take Exams",
+        "Performance",
+        "AI Tutor"
+    ])
 
-    if available_courses:
+    # =====================================================
+    # TAKE EXAMS
+    # =====================================================
 
-        course_names = [
-            course.title
-            for course in available_courses
-        ]
+    with student_tabs[0]:
 
-        selected_course = st.selectbox(
-            "Select Course",
-            course_names
-        )
+        courses = session.query(Course).all()
 
-        assessments = session.query(
-            Assessment
-        ).filter_by(
-            course_title=selected_course
-        ).all()
+        if courses:
 
-        if assessments:
-
-            assessment_titles = [
-                assessment.title
-                for assessment in assessments
+            course_names = [
+                c.title for c in courses
             ]
 
-            selected_assessment_title = st.selectbox(
-                "Select Assessment",
-                assessment_titles
+            selected_course = st.selectbox(
+                "Select Course",
+                course_names
             )
 
-            selected_assessment = session.query(
+            assessments = session.query(
                 Assessment
             ).filter_by(
-                title=selected_assessment_title
-            ).first()
+                course_title=selected_course
+            ).all()
 
-            questions = json.loads(
-                selected_assessment.content
-            )
+            if assessments:
 
-            st.subheader("Assessment Questions")
+                assessment_names = [
+                    a.title for a in assessments
+                ]
 
-            student_answers = {}
+                selected_assessment_name = st.selectbox(
+                    "Select Assessment",
+                    assessment_names
+                )
 
-            for index, question in enumerate(questions):
+                selected_assessment = session.query(
+                    Assessment
+                ).filter_by(
+                    title=selected_assessment_name
+                ).first()
+
+                questions = json.loads(
+                    selected_assessment.content
+                )
+
+                answers = {}
+
+                for index, q in enumerate(questions):
+
+                    st.markdown(
+                        f"### Question {index + 1}"
+                    )
+
+                    st.write(q["question"])
+
+                    if q["type"] == "MCQ":
+
+                        answer = st.radio(
+                            "Select Answer",
+                            q["options"],
+                            key=f"mcq_{index}"
+                        )
+
+                    else:
+
+                        answer = st.text_area(
+                            "Your Answer",
+                            key=f"essay_{index}"
+                        )
+
+                    answers[index] = answer
+
+                if st.button("Submit Assessment"):
+
+                    total_score = 0
+                    feedbacks = []
+
+                    for index, q in enumerate(questions):
+
+                        grading_prompt = f"""
+                        Grade this answer.
+
+                        QUESTION:
+                        {q['question']}
+
+                        ANSWER:
+                        {answers[index]}
+
+                        Return ONLY JSON.
+
+                        {{
+                          "score": 0,
+                          "feedback": ""
+                        }}
+                        """
+
+                        try:
+
+                            result = ask_mistral(
+                                grading_prompt
+                            )
+
+                            result = result.replace("```json", "")
+                            result = result.replace("```", "")
+                            result = result.strip()
+
+                            grading = json.loads(result)
+
+                            total_score += int(
+                                grading["score"]
+                            )
+
+                            feedbacks.append(
+                                grading["feedback"]
+                            )
+
+                        except:
+
+                            feedbacks.append(
+                                "Could not grade answer"
+                            )
+
+                    submission = Submission(
+                        student_email=st.session_state.user_email,
+                        course_title=selected_course,
+                        assessment_title=selected_assessment_name,
+                        answers=json.dumps(answers),
+                        score=str(total_score),
+                        feedback="
+".join(feedbacks)
+                    )
+
+                    session.add(submission)
+                    session.commit()
+
+                    st.success(
+                        f"Assessment Submitted. Score: {total_score}"
+                    )
+
+                    st.subheader("AI Feedback")
+
+                    for feedback in feedbacks:
+                        st.write(feedback)
+
+    # =====================================================
+    # PERFORMANCE
+    # =====================================================
+
+    with student_tabs[1]:
+
+        submissions = session.query(
+            Submission
+        ).filter_by(
+            student_email=st.session_state.user_email
+        ).all()
+
+        if submissions:
+
+            for submission in submissions:
 
                 st.markdown(
-                    f"### Question {index + 1}"
+                    f"### {submission.assessment_title}"
                 )
 
-                st.write(question["question"])
-
-                if question["type"] == "MCQ":
-
-                    answer = st.radio(
-                        "Select Answer",
-                        question["options"],
-                        key=f"mcq_{index}"
-                    )
-
-                else:
-
-                    answer = st.text_area(
-                        "Your Answer",
-                        key=f"text_{index}"
-                    )
-
-                student_answers[index] = answer
-
-            if st.button("Submit Assessment"):
-
-                total_score = 0
-
-                feedback_list = []
-
-                for index, question in enumerate(questions):
-
-                    student_answer = student_answers[index]
-
-                    grading_prompt = f"""
-                    Grade the student answer.
-
-                    QUESTION:
-                    {question['question']}
-
-                    STUDENT ANSWER:
-                    {student_answer}
-
-                    Return ONLY valid JSON.
-
-                    {{
-                      "score": 0,
-                      "feedback": ""
-                    }}
-                    """
-
-                    try:
-
-                        result = ask_mistral(
-                            grading_prompt
-                        )
-
-                        result = result.replace(
-                            "```json",
-                            ""
-                        )
-
-                        result = result.replace(
-                            "```",
-                            ""
-                        )
-
-                        result = result.strip()
-
-                        grading_data = json.loads(result)
-
-                        total_score += int(
-                            grading_data["score"]
-                        )
-
-                        feedback_list.append(
-                            grading_data["feedback"]
-                        )
-
-                    except:
-
-                        feedback_list.append(
-                            "Could not grade answer."
-                        )
-
-                submission = Submission(
-                    student_email=st.session_state.user_email,
-                    course_title=selected_course,
-                    assessment_title=selected_assessment_title,
-                    answers=json.dumps(student_answers),
-                    score=str(total_score),
-                    feedback="\n".join(feedback_list)
+                st.write(
+                    f"Score: {submission.score}"
                 )
 
-                session.add(submission)
+                st.write(submission.feedback)
 
-                session.commit()
+    # =====================================================
+    # AI TUTOR
+    # =====================================================
 
-                st.success(
-                    f"Assessment Submitted! Score: {total_score}"
-                )
+    with student_tabs[2]:
 
-                st.subheader("AI Feedback")
+        st.subheader("AI Learning Assistant")
 
-                for feedback in feedback_list:
-                    st.write(feedback)
+        question = st.text_input(
+            "Ask the AI Tutor"
+        )
 
-            # =================================================
-            # AI TUTOR
-            # =================================================
+        if st.button("Ask Tutor"):
 
-            st.markdown("---")
+            try:
 
-            st.subheader("AI Tutor")
-
-            tutor_question = st.text_input(
-                "Ask the AI Tutor"
-            )
-
-            if st.button("Ask Tutor"):
-
-                knowledge = search_knowledge(
-                    tutor_question
-                )
+                knowledge = search_knowledge(question)
 
                 tutor_prompt = f"""
-                Use the course material below to answer.
+                Use the course material to answer.
 
                 COURSE MATERIAL:
                 {knowledge}
 
                 QUESTION:
-                {tutor_question}
+                {question}
                 """
 
-                try:
+                response = ask_mistral(
+                    tutor_prompt
+                )
 
-                    tutor_response = ask_mistral(
-                        tutor_prompt
-                    )
+                st.write(response)
 
-                    st.write(tutor_response)
+            except Exception as e:
+                st.error(str(e))
 
-                except Exception as e:
-                    st.error(str(e))
+# =========================================================
+# NOT LOGGED IN
+# =========================================================
 
 if not st.session_state.logged_in:
 
-    st.warning(
-        "Please login or create an account."
+    st.info(
+        "Login or create an account to continue"
     )
