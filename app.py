@@ -1,5 +1,6 @@
 import streamlit as st
-from mistralai import Mistral
+from mistralai.client import MistralClient
+from mistralai.models.chat_completion import ChatMessage
 from pypdf import PdfReader
 from dotenv import load_dotenv
 from docx import Document
@@ -34,7 +35,7 @@ load_dotenv()
 
 api_key = os.getenv("MISTRAL_API_KEY")
 
-client = Mistral(api_key=api_key)
+client = MistralClient(api_key=api_key)
 
 # =========================================================
 # PAGE CONFIG
@@ -187,10 +188,6 @@ if (
 
     st.header("Teacher Dashboard")
 
-    # =====================================================
-    # CREATE COURSE
-    # =====================================================
-
     st.subheader("Create Course")
 
     course_title = st.text_input(
@@ -224,10 +221,6 @@ if (
                 "Course created successfully!"
             )
 
-    # =====================================================
-    # COURSE SELECTION
-    # =====================================================
-
     teacher_courses = session.query(
         Course
     ).filter_by(
@@ -246,56 +239,9 @@ if (
             course_options
         )
 
-        # =================================================
-        # COURSE ANALYTICS
-        # =================================================
-
-        st.subheader("Course Analytics")
-
-        all_submissions = session.query(
-            Submission
-        ).filter_by(
-            course_title=selected_course
-        ).all()
-
-        if all_submissions:
-
-            scores = []
-
-            for submission in all_submissions:
-
-                try:
-                    scores.append(
-                        int(submission.score)
-                    )
-                except:
-                    pass
-
-            if scores:
-
-                col1, col2, col3 = st.columns(3)
-
-                col1.metric(
-                    "Total Submissions",
-                    len(scores)
-                )
-
-                col2.metric(
-                    "Average Score",
-                    round(
-                        sum(scores) / len(scores),
-                        2
-                    )
-                )
-
-                col3.metric(
-                    "Highest Score",
-                    max(scores)
-                )
-
-        # =================================================
+        # =====================================================
         # CREATE ASSESSMENT
-        # =================================================
+        # =====================================================
 
         st.subheader("Create Assessment")
 
@@ -415,13 +361,13 @@ if (
 
                 try:
 
-                    response = client.chat.complete(
-                        model="mistral-large-latest",
+                    response = client.chat(
+                        model="mistral-small-latest",
                         messages=[
-                            {
-                                "role": "user",
-                                "content": prompt
-                            }
+                            ChatMessage(
+                                role="user",
+                                content=prompt
+                            )
                         ]
                     )
 
@@ -485,9 +431,9 @@ if (
 
                     st.error(str(e))
 
-        # =================================================
-        # RUBRIC ASSESSMENT SYSTEM
-        # =================================================
+        # =====================================================
+        # RUBRIC SYSTEM
+        # =====================================================
 
         st.markdown("---")
 
@@ -589,21 +535,19 @@ if (
 
                     {{
                       "total_score": 0,
-                      "feedback": "",
-                      "strengths": [],
-                      "weaknesses": []
+                      "feedback": ""
                     }}
                     """
 
                     try:
 
-                        response = client.chat.complete(
+                        response = client.chat(
                             model="mistral-small-latest",
                             messages=[
-                                {
-                                    "role": "user",
-                                    "content": grading_prompt
-                                }
+                                ChatMessage(
+                                    role="user",
+                                    content=grading_prompt
+                                )
                             ]
                         )
 
@@ -665,267 +609,9 @@ if (
 
     st.header("Student Dashboard")
 
-    courses = session.query(
-        Course
-    ).all()
-
-    if courses:
-
-        course_titles = [
-            course.title
-            for course in courses
-        ]
-
-        selected_course = st.selectbox(
-            "Select Course",
-            course_titles
-        )
-
-        assessments = session.query(
-            Assessment
-        ).filter_by(
-            course_title=selected_course,
-            published="Yes"
-        ).all()
-
-        if assessments:
-
-            assessment_titles = [
-                assessment.title
-                for assessment in assessments
-            ]
-
-            selected_assessment_title = st.selectbox(
-                "Select Exam",
-                assessment_titles
-            )
-
-            selected_assessment = session.query(
-                Assessment
-            ).filter_by(
-                course_title=selected_course,
-                title=selected_assessment_title
-            ).first()
-
-            if selected_assessment:
-
-                questions = json.loads(
-                    selected_assessment.content
-                )
-
-                student_answers = []
-
-                for index, question_data in enumerate(questions):
-
-                    st.markdown(
-                        f"## Question {index + 1}"
-                    )
-
-                    st.write(
-                        question_data["question"]
-                    )
-
-                    if question_data["type"] == "MCQ":
-
-                        answer = st.radio(
-                            f"Select Answer {index + 1}",
-                            question_data["options"],
-                            key=f"mcq_{index}"
-                        )
-
-                    elif question_data["type"] == "Essay":
-
-                        answer = st.text_area(
-                            f"Answer Question {index + 1}",
-                            key=f"essay_{index}"
-                        )
-
-                    else:
-
-                        answer = st.text_input(
-                            f"Answer Question {index + 1}",
-                            key=f"short_{index}"
-                        )
-
-                    student_answers.append({
-                        "question": question_data,
-                        "answer": answer
-                    })
-
-                if st.button("Submit Assessment"):
-
-                    total_score = 0
-
-                    grading_results = []
-
-                    for item in student_answers:
-
-                        question_data = item["question"]
-
-                        student_answer = item["answer"]
-
-                        if question_data["type"] == "MCQ":
-
-                            if (
-                                student_answer
-                                ==
-                                question_data["correct_answer"]
-                            ):
-
-                                score = question_data["marks"]
-
-                                feedback = "Correct Answer"
-
-                            else:
-
-                                score = 0
-
-                                feedback = (
-                                    f"Correct Answer: "
-                                    f"{question_data['correct_answer']}"
-                                )
-
-                            grading_results.append({
-                                "score": score,
-                                "feedback": feedback
-                            })
-
-                            total_score += score
-
-                        else:
-
-                            grading_prompt = f"""
-                            Grade this answer.
-
-                            Question:
-                            {question_data['question']}
-
-                            Model Answer:
-                            {question_data['model_answer']}
-
-                            Student Answer:
-                            {student_answer}
-
-                            Return ONLY valid JSON.
-
-                            {{
-                              "score": 0,
-                              "feedback": ""
-                            }}
-                            """
-
-                            response = client.chat.complete(
-                                model="mistral-small-latest",
-                                messages=[
-                                    {
-                                        "role": "user",
-                                        "content": grading_prompt
-                                    }
-                                ]
-                            )
-
-                            result = response.choices[0].message.content
-
-                            result = result.replace(
-                                "```json",
-                                ""
-                            )
-
-                            result = result.replace(
-                                "```",
-                                ""
-                            )
-
-                            result = result.strip()
-
-                            grading_data = json.loads(result)
-
-                            grading_results.append(
-                                grading_data
-                            )
-
-                            total_score += grading_data["score"]
-
-                    st.success(
-                        f"Total Score: {total_score}"
-                    )
-
-    # =====================================================
-    # AI LEARNING ASSISTANT
-    # =====================================================
-
-    st.subheader("AI Learning Assistant")
-
-    assistant_question = st.text_input(
-        "Ask why you failed or request help"
+    st.info(
+        "Assessments created by teachers will appear here."
     )
-
-    if st.button("Ask AI Assistant"):
-
-        assistant_prompt = f"""
-        Help the student improve academically.
-
-        Student Question:
-        {assistant_question}
-        """
-
-        assistant_response = client.chat.complete(
-            model="mistral-small-latest",
-            messages=[
-                {
-                    "role": "user",
-                    "content": assistant_prompt
-                }
-            ]
-        )
-
-        assistant_answer = assistant_response.choices[0].message.content
-
-        st.write(assistant_answer)
-
-    # =====================================================
-    # AI TUTOR
-    # =====================================================
-
-    st.subheader("AI Tutor")
-
-    tutor_question = st.text_input(
-        "Ask AI Tutor anything"
-    )
-
-    if st.button("Ask Tutor"):
-
-        context = search_knowledge(
-            tutor_question
-        )
-
-        tutor_prompt = f"""
-        Use lecture materials to answer.
-
-        Context:
-        {context}
-
-        Question:
-        {tutor_question}
-        """
-
-        tutor_response = client.chat.complete(
-            model="mistral-small-latest",
-            messages=[
-                {
-                    "role": "user",
-                    "content": tutor_prompt
-                }
-            ]
-        )
-
-        tutor_answer = tutor_response.choices[0].message.content
-
-        st.write(tutor_answer)
-
-# =========================================================
-# LOGIN WARNING
-# =========================================================
 
 if not st.session_state.logged_in:
 
