@@ -1,0 +1,934 @@
+import streamlit as st
+from mistralai import Mistral
+from pypdf import PdfReader
+from dotenv import load_dotenv
+from docx import Document
+import zipfile
+import tempfile
+import pandas as pd
+import plotly.express as px
+import os
+import json
+
+from docx import Document as DocxReader
+
+from database import User
+from database import Course
+from database import Assessment
+from database import Submission
+from database import RubricAssessment
+from database import session
+
+from auth import sign_up
+from auth import sign_in
+from auth import sign_out
+
+from rag import process_pdf
+from rag import search_knowledge
+
+# =========================================================
+# LOAD ENVIRONMENT
+# =========================================================
+
+load_dotenv()
+
+api_key = os.getenv("MISTRAL_API_KEY")
+
+client = Mistral(api_key=api_key)
+
+# =========================================================
+# PAGE CONFIG
+# =========================================================
+
+st.set_page_config(
+    page_title="AI LMS Platform",
+    layout="wide"
+)
+
+st.title("AI Assessment & Learning Platform")
+
+# =========================================================
+# SESSION STATE
+# =========================================================
+
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
+
+if "user_email" not in st.session_state:
+    st.session_state.user_email = ""
+
+if "role" not in st.session_state:
+    st.session_state.role = ""
+
+# =========================================================
+# AUTHENTICATION
+# =========================================================
+
+st.sidebar.title("Authentication")
+
+auth_mode = st.sidebar.selectbox(
+    "Choose Option",
+    ["Login", "Signup"]
+)
+
+email = st.sidebar.text_input("Email")
+
+password = st.sidebar.text_input(
+    "Password",
+    type="password"
+)
+
+role = st.sidebar.selectbox(
+    "Select Role",
+    ["Teacher", "Student"]
+)
+
+# =========================================================
+# SIGNUP
+# =========================================================
+
+if auth_mode == "Signup":
+
+    if st.sidebar.button("Create Account"):
+
+        try:
+
+            sign_up(email, password)
+
+            existing_user = session.query(User).filter_by(
+                email=email
+            ).first()
+
+            if not existing_user:
+
+                new_user = User(
+                    email=email,
+                    role=role
+                )
+
+                session.add(new_user)
+
+                session.commit()
+
+            st.success(
+                "Account created successfully!"
+            )
+
+        except Exception as e:
+
+            st.error(str(e))
+
+# =========================================================
+# LOGIN
+# =========================================================
+
+if auth_mode == "Login":
+
+    if st.sidebar.button("Login"):
+
+        try:
+
+            response = sign_in(
+                email,
+                password
+            )
+
+            if hasattr(response, "user"):
+
+                st.session_state.logged_in = True
+
+                st.session_state.user_email = email
+
+                user = session.query(User).filter_by(
+                    email=email
+                ).first()
+
+                if user:
+                    st.session_state.role = user.role
+
+                st.rerun()
+
+        except Exception as e:
+
+            st.error(str(e))
+
+# =========================================================
+# LOGOUT
+# =========================================================
+
+if st.session_state.logged_in:
+
+    st.sidebar.success(
+        f"Logged in as: {st.session_state.user_email}"
+    )
+
+    st.sidebar.success(
+        f"Role: {st.session_state.role}"
+    )
+
+    if st.sidebar.button("Logout"):
+
+        sign_out()
+
+        st.session_state.logged_in = False
+        st.session_state.user_email = ""
+        st.session_state.role = ""
+
+        st.rerun()
+
+# =========================================================
+# TEACHER DASHBOARD
+# =========================================================
+
+if (
+    st.session_state.logged_in
+    and st.session_state.role == "Teacher"
+):
+
+    st.header("Teacher Dashboard")
+
+    # =====================================================
+    # CREATE COURSE
+    # =====================================================
+
+    st.subheader("Create Course")
+
+    course_title = st.text_input(
+        "Course Title"
+    )
+
+    if st.button("Create Course"):
+
+        existing_course = session.query(Course).filter_by(
+            title=course_title
+        ).first()
+
+        if existing_course:
+
+            st.warning(
+                "Course already exists."
+            )
+
+        else:
+
+            new_course = Course(
+                title=course_title,
+                teacher_email=st.session_state.user_email
+            )
+
+            session.add(new_course)
+
+            session.commit()
+
+            st.success(
+                "Course created successfully!"
+            )
+
+    # =====================================================
+    # COURSE SELECTION
+    # =====================================================
+
+    teacher_courses = session.query(
+        Course
+    ).filter_by(
+        teacher_email=st.session_state.user_email
+    ).all()
+
+    if teacher_courses:
+
+        course_options = [
+            course.title
+            for course in teacher_courses
+        ]
+
+        selected_course = st.selectbox(
+            "Select Course",
+            course_options
+        )
+
+        # =================================================
+        # COURSE ANALYTICS
+        # =================================================
+
+        st.subheader("Course Analytics")
+
+        all_submissions = session.query(
+            Submission
+        ).filter_by(
+            course_title=selected_course
+        ).all()
+
+        if all_submissions:
+
+            scores = []
+
+            for submission in all_submissions:
+
+                try:
+                    scores.append(
+                        int(submission.score)
+                    )
+                except:
+                    pass
+
+            if scores:
+
+                col1, col2, col3 = st.columns(3)
+
+                col1.metric(
+                    "Total Submissions",
+                    len(scores)
+                )
+
+                col2.metric(
+                    "Average Score",
+                    round(
+                        sum(scores) / len(scores),
+                        2
+                    )
+                )
+
+                col3.metric(
+                    "Highest Score",
+                    max(scores)
+                )
+
+        # =================================================
+        # CREATE ASSESSMENT
+        # =================================================
+
+        st.subheader("Create Assessment")
+
+        assessment_title = st.text_input(
+            "Assessment Title"
+        )
+
+        num_questions = st.slider(
+            "Number of Questions",
+            1,
+            20,
+            5
+        )
+
+        difficulty = st.selectbox(
+            "Difficulty",
+            ["Easy", "Medium", "Hard"]
+        )
+
+        question_type = st.selectbox(
+            "Question Type",
+            ["Essay", "Short Answer", "MCQ"]
+        )
+
+        marks = st.selectbox(
+            "Marks Per Question",
+            [2, 5, 10]
+        )
+
+        uploaded_files = st.file_uploader(
+            "Upload PDFs",
+            type="pdf",
+            accept_multiple_files=True
+        )
+
+        if uploaded_files:
+
+            combined_text = ""
+
+            for uploaded_file in uploaded_files:
+
+                temp_file = f"temp_{uploaded_file.name}"
+
+                with open(temp_file, "wb") as f:
+                    f.write(uploaded_file.read())
+
+                process_pdf(temp_file)
+
+                reader = PdfReader(temp_file)
+
+                for page in reader.pages:
+
+                    extracted = page.extract_text()
+
+                    if extracted:
+                        combined_text += extracted
+
+            st.success(
+                "PDFs uploaded successfully!"
+            )
+
+            if st.button("Generate Assessment"):
+
+                if question_type == "MCQ":
+
+                    format_instruction = """
+                    Return ONLY valid JSON.
+
+                    [
+                      {
+                        "question": "",
+                        "type": "MCQ",
+                        "options": [
+                          "",
+                          "",
+                          "",
+                          ""
+                        ],
+                        "correct_answer": "",
+                        "marks": 0
+                      }
+                    ]
+                    """
+
+                else:
+
+                    format_instruction = """
+                    Return ONLY valid JSON.
+
+                    [
+                      {
+                        "question": "",
+                        "type": "",
+                        "model_answer": "",
+                        "marks": 0
+                      }
+                    ]
+                    """
+
+                prompt = f"""
+                Generate assessment questions.
+
+                {format_instruction}
+
+                Course:
+                {selected_course}
+
+                Number of Questions:
+                {num_questions}
+
+                Difficulty:
+                {difficulty}
+
+                Lecture Material:
+                {combined_text[:8000]}
+                """
+
+                try:
+
+                    response = client.chat.complete(
+                        model="mistral-large-latest",
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ]
+                    )
+
+                    result = response.choices[0].message.content
+
+                    result = result.replace(
+                        "```json",
+                        ""
+                    )
+
+                    result = result.replace(
+                        "```",
+                        ""
+                    )
+
+                    result = result.strip()
+
+                    questions = json.loads(result)
+
+                    st.subheader(
+                        "Generated Assessment"
+                    )
+
+                    for index, question_data in enumerate(questions):
+
+                        st.markdown(
+                            f"## Question {index + 1}"
+                        )
+
+                        st.write(
+                            question_data["question"]
+                        )
+
+                        if question_data["type"] == "MCQ":
+
+                            for option in question_data["options"]:
+
+                                st.write(f"- {option}")
+
+                    new_assessment = Assessment(
+                        course_title=selected_course,
+                        title=assessment_title,
+                        teacher_email=st.session_state.user_email,
+                        content=json.dumps(questions),
+                        difficulty=difficulty,
+                        question_type=question_type,
+                        marks=str(marks),
+                        duration="30",
+                        published="Yes"
+                    )
+
+                    session.add(new_assessment)
+
+                    session.commit()
+
+                    st.success(
+                        "Assessment Published!"
+                    )
+
+                except Exception as e:
+
+                    st.error(str(e))
+
+        # =================================================
+        # RUBRIC ASSESSMENT SYSTEM
+        # =================================================
+
+        st.markdown("---")
+
+        st.subheader("Rubric-Based Assessment")
+
+        rubric_text = st.text_area(
+            "Enter Personalized Rubric",
+            height=200
+        )
+
+        student_work = st.file_uploader(
+            "Upload Student Work",
+            type=["pdf", "docx", "zip"],
+            key="rubric_upload"
+        )
+
+        def extract_text_from_file(file_path):
+
+            extracted_text = ""
+
+            if file_path.endswith(".pdf"):
+
+                reader = PdfReader(file_path)
+
+                for page in reader.pages:
+
+                    text = page.extract_text()
+
+                    if text:
+                        extracted_text += text
+
+            elif file_path.endswith(".docx"):
+
+                doc = DocxReader(file_path)
+
+                for para in doc.paragraphs:
+                    extracted_text += para.text + "\n"
+
+            return extracted_text
+
+        if student_work is not None:
+
+            temp_dir = tempfile.mkdtemp()
+
+            uploaded_path = os.path.join(
+                temp_dir,
+                student_work.name
+            )
+
+            with open(uploaded_path, "wb") as f:
+                f.write(student_work.read())
+
+            student_files = []
+
+            if uploaded_path.endswith(".zip"):
+
+                with zipfile.ZipFile(
+                    uploaded_path,
+                    'r'
+                ) as zip_ref:
+
+                    zip_ref.extractall(temp_dir)
+
+                for root, dirs, files in os.walk(temp_dir):
+
+                    for file in files:
+
+                        if (
+                            file.endswith(".pdf")
+                            or
+                            file.endswith(".docx")
+                        ):
+
+                            student_files.append(
+                                os.path.join(root, file)
+                            )
+
+            else:
+                student_files.append(uploaded_path)
+
+            if st.button("Start Rubric Assessment"):
+
+                for file_path in student_files:
+
+                    extracted_text = extract_text_from_file(
+                        file_path
+                    )
+
+                    grading_prompt = f"""
+                    Assess this work using the rubric.
+
+                    RUBRIC:
+                    {rubric_text}
+
+                    STUDENT WORK:
+                    {extracted_text[:12000]}
+
+                    Return ONLY valid JSON.
+
+                    {{
+                      "total_score": 0,
+                      "feedback": "",
+                      "strengths": [],
+                      "weaknesses": []
+                    }}
+                    """
+
+                    try:
+
+                        response = client.chat.complete(
+                            model="mistral-small-latest",
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": grading_prompt
+                                }
+                            ]
+                        )
+
+                        result = response.choices[0].message.content
+
+                        result = result.replace(
+                            "```json",
+                            ""
+                        )
+
+                        result = result.replace(
+                            "```",
+                            ""
+                        )
+
+                        result = result.strip()
+
+                        grading_data = json.loads(result)
+
+                        st.write(
+                            f"Score: {grading_data['total_score']}"
+                        )
+
+                        st.write(
+                            f"Feedback: {grading_data['feedback']}"
+                        )
+
+                        new_result = RubricAssessment(
+                            teacher_email=st.session_state.user_email,
+                            course_title=selected_course,
+                            student_name=os.path.basename(file_path),
+                            file_name=os.path.basename(file_path),
+                            rubric=rubric_text,
+                            total_score=str(
+                                grading_data['total_score']
+                            ),
+                            feedback=grading_data['feedback']
+                        )
+
+                        session.add(new_result)
+
+                        session.commit()
+
+                        st.success(
+                            "Rubric assessment saved!"
+                        )
+
+                    except Exception as e:
+                        st.error(str(e))
+
+# =========================================================
+# STUDENT DASHBOARD
+# =========================================================
+
+if (
+    st.session_state.logged_in
+    and st.session_state.role == "Student"
+):
+
+    st.header("Student Dashboard")
+
+    courses = session.query(
+        Course
+    ).all()
+
+    if courses:
+
+        course_titles = [
+            course.title
+            for course in courses
+        ]
+
+        selected_course = st.selectbox(
+            "Select Course",
+            course_titles
+        )
+
+        assessments = session.query(
+            Assessment
+        ).filter_by(
+            course_title=selected_course,
+            published="Yes"
+        ).all()
+
+        if assessments:
+
+            assessment_titles = [
+                assessment.title
+                for assessment in assessments
+            ]
+
+            selected_assessment_title = st.selectbox(
+                "Select Exam",
+                assessment_titles
+            )
+
+            selected_assessment = session.query(
+                Assessment
+            ).filter_by(
+                course_title=selected_course,
+                title=selected_assessment_title
+            ).first()
+
+            if selected_assessment:
+
+                questions = json.loads(
+                    selected_assessment.content
+                )
+
+                student_answers = []
+
+                for index, question_data in enumerate(questions):
+
+                    st.markdown(
+                        f"## Question {index + 1}"
+                    )
+
+                    st.write(
+                        question_data["question"]
+                    )
+
+                    if question_data["type"] == "MCQ":
+
+                        answer = st.radio(
+                            f"Select Answer {index + 1}",
+                            question_data["options"],
+                            key=f"mcq_{index}"
+                        )
+
+                    elif question_data["type"] == "Essay":
+
+                        answer = st.text_area(
+                            f"Answer Question {index + 1}",
+                            key=f"essay_{index}"
+                        )
+
+                    else:
+
+                        answer = st.text_input(
+                            f"Answer Question {index + 1}",
+                            key=f"short_{index}"
+                        )
+
+                    student_answers.append({
+                        "question": question_data,
+                        "answer": answer
+                    })
+
+                if st.button("Submit Assessment"):
+
+                    total_score = 0
+
+                    grading_results = []
+
+                    for item in student_answers:
+
+                        question_data = item["question"]
+
+                        student_answer = item["answer"]
+
+                        if question_data["type"] == "MCQ":
+
+                            if (
+                                student_answer
+                                ==
+                                question_data["correct_answer"]
+                            ):
+
+                                score = question_data["marks"]
+
+                                feedback = "Correct Answer"
+
+                            else:
+
+                                score = 0
+
+                                feedback = (
+                                    f"Correct Answer: "
+                                    f"{question_data['correct_answer']}"
+                                )
+
+                            grading_results.append({
+                                "score": score,
+                                "feedback": feedback
+                            })
+
+                            total_score += score
+
+                        else:
+
+                            grading_prompt = f"""
+                            Grade this answer.
+
+                            Question:
+                            {question_data['question']}
+
+                            Model Answer:
+                            {question_data['model_answer']}
+
+                            Student Answer:
+                            {student_answer}
+
+                            Return ONLY valid JSON.
+
+                            {{
+                              "score": 0,
+                              "feedback": ""
+                            }}
+                            """
+
+                            response = client.chat.complete(
+                                model="mistral-small-latest",
+                                messages=[
+                                    {
+                                        "role": "user",
+                                        "content": grading_prompt
+                                    }
+                                ]
+                            )
+
+                            result = response.choices[0].message.content
+
+                            result = result.replace(
+                                "```json",
+                                ""
+                            )
+
+                            result = result.replace(
+                                "```",
+                                ""
+                            )
+
+                            result = result.strip()
+
+                            grading_data = json.loads(result)
+
+                            grading_results.append(
+                                grading_data
+                            )
+
+                            total_score += grading_data["score"]
+
+                    st.success(
+                        f"Total Score: {total_score}"
+                    )
+
+    # =====================================================
+    # AI LEARNING ASSISTANT
+    # =====================================================
+
+    st.subheader("AI Learning Assistant")
+
+    assistant_question = st.text_input(
+        "Ask why you failed or request help"
+    )
+
+    if st.button("Ask AI Assistant"):
+
+        assistant_prompt = f"""
+        Help the student improve academically.
+
+        Student Question:
+        {assistant_question}
+        """
+
+        assistant_response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[
+                {
+                    "role": "user",
+                    "content": assistant_prompt
+                }
+            ]
+        )
+
+        assistant_answer = assistant_response.choices[0].message.content
+
+        st.write(assistant_answer)
+
+    # =====================================================
+    # AI TUTOR
+    # =====================================================
+
+    st.subheader("AI Tutor")
+
+    tutor_question = st.text_input(
+        "Ask AI Tutor anything"
+    )
+
+    if st.button("Ask Tutor"):
+
+        context = search_knowledge(
+            tutor_question
+        )
+
+        tutor_prompt = f"""
+        Use lecture materials to answer.
+
+        Context:
+        {context}
+
+        Question:
+        {tutor_question}
+        """
+
+        tutor_response = client.chat.complete(
+            model="mistral-small-latest",
+            messages=[
+                {
+                    "role": "user",
+                    "content": tutor_prompt
+                }
+            ]
+        )
+
+        tutor_answer = tutor_response.choices[0].message.content
+
+        st.write(tutor_answer)
+
+# =========================================================
+# LOGIN WARNING
+# =========================================================
+
+if not st.session_state.logged_in:
+
+    st.warning(
+        "Please login or create an account."
+    )
