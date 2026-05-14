@@ -3,6 +3,7 @@ from sqlalchemy import Column
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
+
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker
 
@@ -10,14 +11,21 @@ from sqlalchemy.orm import sessionmaker
 # DATABASE SETUP
 # =========================================================
 
+DATABASE_URL = "sqlite:///assessment.db"
+
 engine = create_engine(
-    "sqlite:///assessment.db"
+    DATABASE_URL,
+    echo=False
 )
+
+Session = sessionmaker(bind=engine)
+
+session = Session()
 
 Base = declarative_base()
 
 # =========================================================
-# USERS TABLE
+# USER TABLE
 # =========================================================
 
 class User(Base):
@@ -29,12 +37,17 @@ class User(Base):
         primary_key=True
     )
 
-    email = Column(String)
+    email = Column(
+        String,
+        unique=True
+    )
 
-    role = Column(String)
+    role = Column(
+        String
+    )
 
 # =========================================================
-# COURSES TABLE
+# COURSE TABLE
 # =========================================================
 
 class Course(Base):
@@ -46,12 +59,17 @@ class Course(Base):
         primary_key=True
     )
 
-    title = Column(String)
+    title = Column(
+        String,
+        unique=True
+    )
 
-    teacher_email = Column(String)
+    teacher_email = Column(
+        String
+    )
 
 # =========================================================
-# ASSESSMENTS TABLE
+# ASSESSMENT TABLE
 # =========================================================
 
 class Assessment(Base):
@@ -63,26 +81,44 @@ class Assessment(Base):
         primary_key=True
     )
 
-    course_title = Column(String)
+    course_title = Column(
+        String
+    )
 
-    title = Column(String)
+    title = Column(
+        String
+    )
 
-    teacher_email = Column(String)
+    teacher_email = Column(
+        String
+    )
 
-    content = Column(Text)
+    content = Column(
+        Text
+    )
 
-    difficulty = Column(String)
+    difficulty = Column(
+        String
+    )
 
-    question_type = Column(String)
+    question_type = Column(
+        String
+    )
 
-    marks = Column(String)
+    marks = Column(
+        String
+    )
 
-    duration = Column(String)
+    duration = Column(
+        String
+    )
 
-    published = Column(String)
+    published = Column(
+        String
+    )
 
 # =========================================================
-# SUBMISSIONS TABLE
+# SUBMISSION TABLE
 # =========================================================
 
 class Submission(Base):
@@ -94,26 +130,32 @@ class Submission(Base):
         primary_key=True
     )
 
-    user_email = Column(String)
+    student_email = Column(
+        String
+    )
 
-    course_title = Column(String)
+    course_title = Column(
+        String
+    )
 
-    assessment_title = Column(String)
+    assessment_title = Column(
+        String
+    )
 
-    question = Column(Text)
+    answers = Column(
+        Text
+    )
 
-    student_answer = Column(Text)
+    score = Column(
+        String
+    )
 
-    score = Column(String)
-
-    feedback = Column(Text)
-
-    strengths = Column(Text)
-
-    weaknesses = Column(Text)
+    feedback = Column(
+        Text
+    )
 
 # =========================================================
-# RUBRIC ASSESSMENTS TABLE
+# RUBRIC ASSESSMENT TABLE
 # =========================================================
 
 class RubricAssessment(Base):
@@ -125,32 +167,36 @@ class RubricAssessment(Base):
         primary_key=True
     )
 
-    teacher_email = Column(String)
+    teacher_email = Column(
+        String
+    )
 
-    course_title = Column(String)
+    course_title = Column(
+        String
+    )
 
-    student_name = Column(String)
+    student_name = Column(
+        String
+    )
 
-    file_name = Column(String)
+    file_name = Column(
+        String
+    )
 
-    rubric = Column(Text)
+    rubric = Column(
+        Text
+    )
 
-    total_score = Column(String)
+    total_score = Column(
+        String
+    )
 
-    feedback = Column(Text)
+    feedback = Column(
+        Text
+    )
 
 # =========================================================
-# CREATE ALL TABLES
+# CREATE DATABASE TABLES
 # =========================================================
 
 Base.metadata.create_all(engine)
-
-# =========================================================
-# DATABASE SESSION
-# =========================================================
-
-Session = sessionmaker(
-    bind=engine
-)
-
-session = Session()
