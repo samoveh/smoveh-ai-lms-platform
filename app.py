@@ -457,9 +457,9 @@ if (
 
     with tabs[3]:
 
-    st.subheader("AI Rubric Assessment")
+        st.subheader("AI Rubric Assessment")
 
-    rubric = st.text_area(
+        rubric = st.text_area(
         "Enter Your Rubric",
         height=250
     )
