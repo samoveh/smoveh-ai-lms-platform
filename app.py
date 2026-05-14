@@ -457,23 +457,153 @@ if (
 
     with tabs[3]:
 
-        st.subheader("Rubric Assessment")
+    st.subheader("AI Rubric Assessment")
 
-        rubric = st.text_area(
-            "Rubric"
-        )
+    rubric = st.text_area(
+        "Enter Your Rubric",
+        height=250
+    )
 
-        uploaded_work = st.file_uploader(
-            "Upload Student Work",
-            type=["pdf", "docx", "zip"]
-        )
+    uploaded_files = st.file_uploader(
+        "Upload Student Files",
+        type=["pdf", "docx"],
+        accept_multiple_files=True
+    )
 
-        if uploaded_work:
+    if uploaded_files and rubric:
 
-            if st.button("Start Assessment"):
+        if st.button("Grade Submissions"):
 
-                st.success(
-                    "Rubric assessment started"
+            grading_results = []
+
+            progress = st.progress(0)
+
+            for index, uploaded_file in enumerate(uploaded_files):
+
+                extracted_text = ""
+
+                # ==========================================
+                # READ PDF
+                # ==========================================
+
+                if uploaded_file.name.endswith(".pdf"):
+
+                    reader = PdfReader(uploaded_file)
+
+                    for page in reader.pages:
+
+                        text = page.extract_text()
+
+                        if text:
+                            extracted_text += text
+
+                # ==========================================
+                # READ DOCX
+                # ==========================================
+
+                elif uploaded_file.name.endswith(".docx"):
+
+                    doc = DocxReader(uploaded_file)
+
+                    for para in doc.paragraphs:
+                        extracted_text += para.text + "\n"
+
+                # ==========================================
+                # AI RUBRIC GRADING
+                # ==========================================
+
+                grading_prompt = f"""
+                You are an academic evaluator.
+
+                Grade this student work STRICTLY based on the rubric.
+
+                RUBRIC:
+                {rubric}
+
+                STUDENT WORK:
+                {extracted_text[:12000]}
+
+                Return ONLY valid JSON:
+
+                {{
+                    "student": "{uploaded_file.name}",
+                    "score": 0,
+                    "grade": "",
+                    "feedback": ""
+                }}
+                """
+
+                try:
+
+                    result = ask_mistral(grading_prompt)
+
+                    result = result.replace("```json", "")
+                    result = result.replace("```", "")
+                    result = result.strip()
+
+                    grading = json.loads(result)
+
+                    grading_results.append({
+                        "Student File": uploaded_file.name,
+                        "Score": grading["score"],
+                        "Grade": grading["grade"],
+                        "Feedback": grading["feedback"]
+                    })
+
+                    rubric_record = RubricAssessment(
+                        teacher_email=st.session_state.user_email,
+                        course_title="General",
+                        student_name=uploaded_file.name,
+                        file_name=uploaded_file.name,
+                        rubric=rubric,
+                        total_score=str(grading["score"]),
+                        feedback=grading["feedback"]
+                    )
+
+                    session.add(rubric_record)
+                    session.commit()
+
+                except Exception as e:
+
+                    grading_results.append({
+                        "Student File": uploaded_file.name,
+                        "Score": "Error",
+                        "Grade": "Error",
+                        "Feedback": str(e)
+                    })
+
+                progress.progress(
+                    (index + 1) / len(uploaded_files)
+                )
+
+            # ==========================================
+            # SHOW RESULTS
+            # ==========================================
+
+            st.success("Rubric grading completed")
+
+            df = pd.DataFrame(grading_results)
+
+            st.dataframe(df)
+
+            # ==========================================
+            # DOWNLOAD EXCEL
+            # ==========================================
+
+            excel_file = "rubric_results.xlsx"
+
+            df.to_excel(
+                excel_file,
+                index=False
+            )
+
+            with open(excel_file, "rb") as file:
+
+                st.download_button(
+                    label="Download Excel Results",
+                    data=file,
+                    file_name="rubric_results.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
 
 # =========================================================
